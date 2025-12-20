@@ -57,11 +57,19 @@ fn main() {
 fn link_against_cxx_stdlib() {
     // Z3 needs a C++ standard library. Customize which one we use with the
     // `CXXSTDLIB` environment variable, if needed.
+    let target = env::var("TARGET").unwrap();
+
+    // WASI targets use wasi-sdk's libc++ which is linked automatically
+    if target.starts_with("wasm32-wasi") {
+        println!("cargo:rerun-if-env-changed=CXXSTDLIB");
+        // wasi-sdk provides libc++ in sysroot, no explicit link needed
+        return;
+    }
+
     let cxx = match env::var("CXXSTDLIB") {
         Ok(s) if s.is_empty() => None,
         Ok(s) => Some(s),
         Err(_) => {
-            let target = env::var("TARGET").unwrap();
             if target.contains("msvc") {
                 None
             } else if target.contains("apple")
@@ -71,6 +79,9 @@ fn link_against_cxx_stdlib() {
                 Some("c++".to_string())
             } else if target.contains("android") {
                 Some("c++_shared".to_string())
+            } else if target.starts_with("wasm32") {
+                // Emscripten and other WASM targets
+                None
             } else {
                 Some("stdc++".to_string())
             }
@@ -308,11 +319,29 @@ fn generate_binding(header: &str, search_paths: &[PathBuf]) {
         #[cfg(not(feature = "gh-release"))]
         let mut enum_bindings =
             enum_bindings.parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
-        if env::var("TARGET").unwrap() == "wasm32-unknown-emscripten" {
+        let target = env::var("TARGET").unwrap();
+        if target == "wasm32-unknown-emscripten" {
             enum_bindings = enum_bindings.clang_arg(format!(
                 "--sysroot={}/upstream/emscripten/cache/sysroot",
                 env::var("EMSDK").expect("$EMSDK env var missing. Is emscripten installed?")
             ));
+        } else if target.starts_with("wasm32-wasi") {
+            // wasi-sdk support
+            let wasi_sdk = env::var("WASI_SDK_PREFIX")
+                .or_else(|_| {
+                    // Try common locations
+                    for path in &["/opt/wasi-sdk", &format!("{}/wasi-sdk", env::var("HOME").unwrap_or_default())] {
+                        if std::path::Path::new(path).exists() {
+                            return Ok(path.to_string());
+                        }
+                    }
+                    Err(env::VarError::NotPresent)
+                })
+                .expect("WASI_SDK_PREFIX not set and wasi-sdk not found");
+
+            enum_bindings = enum_bindings
+                .clang_arg(format!("--sysroot={}/share/wasi-sysroot", wasi_sdk))
+                .clang_arg(format!("--target={}", target));
         }
         enum_bindings
             .generate()
@@ -428,8 +457,36 @@ fn build_bundled_z3() {
         cfg.cxxflag("-DWIN32");
         cfg.cxxflag("-D_WINDOWS");
         cfg.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
+    } else if env::var("TARGET").unwrap().starts_with("wasm32-wasi") {
+        // wasi-sdk build configuration
+        let wasi_sdk = env::var("WASI_SDK_PREFIX")
+            .or_else(|_| {
+                for path in &["/opt/wasi-sdk", &format!("{}/wasi-sdk", env::var("HOME").unwrap_or_default())] {
+                    if std::path::Path::new(path).exists() {
+                        return Ok(path.to_string());
+                    }
+                }
+                Err(env::VarError::NotPresent)
+            })
+            .expect("WASI_SDK_PREFIX not set and wasi-sdk not found");
+
+        let target = env::var("TARGET").unwrap();
+        cfg.define("CMAKE_TOOLCHAIN_FILE", format!("{}/share/cmake/wasi-sdk.cmake", wasi_sdk))
+            .define("CMAKE_C_COMPILER", format!("{}/bin/clang", wasi_sdk))
+            .define("CMAKE_CXX_COMPILER", format!("{}/bin/clang++", wasi_sdk))
+            .define("CMAKE_C_COMPILER_TARGET", &target)
+            .define("CMAKE_CXX_COMPILER_TARGET", &target)
+            .define("CMAKE_SYSROOT", format!("{}/share/wasi-sysroot", wasi_sdk))
+            // Single-threaded for WASI (no pthread in preview2)
+            .define("Z3_SINGLE_THREADED", "ON")
+            .define("Z3_POLLING_TIMER", "ON")
+            // Disable features not available in WASI
+            .define("Z3_BUILD_EXECUTABLE", "OFF")
+            .define("Z3_BUILD_PYTHON_BINDINGS", "OFF")
+            .define("Z3_BUILD_JAVA_BINDINGS", "OFF")
+            .define("Z3_BUILD_DOTNET_BINDINGS", "OFF");
     } else if env::var("TARGET").unwrap().starts_with("wasm") {
-        // for wasm targets, ensure we allow exceptions
+        // for emscripten and other wasm targets, ensure we allow exceptions
         // because z3 has some exceptions
         cfg.no_default_flags(true).cxxflag("-fexceptions");
     }
