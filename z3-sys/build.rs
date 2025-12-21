@@ -440,6 +440,9 @@ fn build_bundled_z3() {
         println!("Found cached z3 at {}", bundled_path.display());
     }
 
+    // For WASI builds, we use our forked Z3's cmake toolchain file
+    let z3_toolchain_file = bundled_path.join("cmake/wasi-sdk.cmake");
+
     let mut cfg = cmake::Config::new(bundled_path);
     // Don't build `libz3.so`, build `libz3.a` instead.
     cfg.define("Z3_BUILD_LIBZ3_SHARED", "false")
@@ -458,7 +461,7 @@ fn build_bundled_z3() {
         cfg.cxxflag("-D_WINDOWS");
         cfg.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
     } else if env::var("TARGET").unwrap().starts_with("wasm32-wasi") {
-        // wasi-sdk build configuration
+        // wasi-sdk build configuration using Z3 fork's toolchain file
         let wasi_sdk = env::var("WASI_SDK_PREFIX")
             .or_else(|_| {
                 for path in &["/opt/wasi-sdk", &format!("{}/wasi-sdk", env::var("HOME").unwrap_or_default())] {
@@ -470,21 +473,9 @@ fn build_bundled_z3() {
             })
             .expect("WASI_SDK_PREFIX not set and wasi-sdk not found");
 
-        let target = env::var("TARGET").unwrap();
-        cfg.define("CMAKE_TOOLCHAIN_FILE", format!("{}/share/cmake/wasi-sdk.cmake", wasi_sdk))
-            .define("CMAKE_C_COMPILER", format!("{}/bin/clang", wasi_sdk))
-            .define("CMAKE_CXX_COMPILER", format!("{}/bin/clang++", wasi_sdk))
-            .define("CMAKE_C_COMPILER_TARGET", &target)
-            .define("CMAKE_CXX_COMPILER_TARGET", &target)
-            .define("CMAKE_SYSROOT", format!("{}/share/wasi-sysroot", wasi_sdk))
-            // Single-threaded for WASI (no pthread in preview2)
-            .define("Z3_SINGLE_THREADED", "ON")
-            .define("Z3_POLLING_TIMER", "ON")
-            // Disable features not available in WASI
-            .define("Z3_BUILD_EXECUTABLE", "OFF")
-            .define("Z3_BUILD_PYTHON_BINDINGS", "OFF")
-            .define("Z3_BUILD_JAVA_BINDINGS", "OFF")
-            .define("Z3_BUILD_DOTNET_BINDINGS", "OFF");
+        // Use our Z3 fork's WASI toolchain file which has all the correct settings
+        cfg.define("CMAKE_TOOLCHAIN_FILE", z3_toolchain_file.display().to_string())
+            .define("WASI_SDK_PREFIX", &wasi_sdk);
     } else if env::var("TARGET").unwrap().starts_with("wasm") {
         // for emscripten and other wasm targets, ensure we allow exceptions
         // because z3 has some exceptions
