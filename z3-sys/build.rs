@@ -473,6 +473,11 @@ fn build_bundled_z3() {
             })
             .expect("WASI_SDK_PREFIX not set and wasi-sdk not found");
 
+        // Z3 uses C++ exceptions - must disable cmake's default -fno-exceptions flag
+        // and explicitly enable exceptions for the WASI build
+        cfg.no_default_flags(true)
+            .cxxflag("-fexceptions");
+
         // Use our Z3 fork's WASI toolchain file which has all the correct settings
         cfg.define("CMAKE_TOOLCHAIN_FILE", z3_toolchain_file.display().to_string())
             .define("WASI_SDK_PREFIX", &wasi_sdk);
