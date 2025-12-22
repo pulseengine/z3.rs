@@ -62,7 +62,8 @@ fn link_against_cxx_stdlib() {
     // WASI targets use wasi-sdk's libc++ which is linked automatically
     if target.starts_with("wasm32-wasi") {
         println!("cargo:rerun-if-env-changed=CXXSTDLIB");
-        // wasi-sdk provides libc++ in sysroot, no explicit link needed
+        // Link against libc++abi for exception support and RTTI
+        println!("cargo:rustc-link-lib=c++abi");
         return;
     }
 
