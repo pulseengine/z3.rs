@@ -59,10 +59,25 @@ fn link_against_cxx_stdlib() {
     // `CXXSTDLIB` environment variable, if needed.
     let target = env::var("TARGET").unwrap();
 
-    // WASI targets use wasi-sdk's libc++ which is linked automatically
+    // WASI targets use wasi-sdk's libc++
     // Exception handling and new/delete are provided by wasi_stubs.cpp in Z3
     if target.starts_with("wasm32-wasi") {
         println!("cargo:rerun-if-env-changed=CXXSTDLIB");
+        println!("cargo:rerun-if-env-changed=WASI_SDK_PREFIX");
+
+        // Explicitly link libc++ for chrono, iostream implementations
+        if let Ok(wasi_sdk) = env::var("WASI_SDK_PREFIX") {
+            let target_dir = if target.contains("wasip2") {
+                "wasm32-wasip2"
+            } else if target.contains("wasip1") {
+                "wasm32-wasip1"
+            } else {
+                "wasm32-wasi"
+            };
+            let sysroot_lib = format!("{}/share/wasi-sysroot/lib/{}", wasi_sdk, target_dir);
+            println!("cargo:rustc-link-search=native={}", sysroot_lib);
+        }
+        println!("cargo:rustc-link-lib=static=c++");
         return;
     }
 
