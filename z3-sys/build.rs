@@ -78,6 +78,7 @@ fn link_against_cxx_stdlib() {
             println!("cargo:rustc-link-search=native={}", sysroot_lib);
         }
         println!("cargo:rustc-link-lib=static=c++");
+        println!("cargo:rustc-link-lib=static=c++abi");
         return;
     }
 
